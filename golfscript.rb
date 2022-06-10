@@ -195,7 +195,7 @@ class Gstring < Garray
 	def initialize(a)
 		@val=case a
 			when NilClass then []
-			when String then a.bytes
+			when String then a.unpack('C*')
 			when Array then a
 			when Garray then a.flatten.val
 		end
