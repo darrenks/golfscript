@@ -1,6 +1,30 @@
 #!/usr/bin/ruby
-#(c) Copyright 2008 Darren Smith. All Rights Reserved.
+
+# (c) Copyright 2008 Darren Smith.
+# MIT License.
+
+if defined? Encoding
+	Encoding.default_external="ASCII-8BIT"
+end
+
 $lb = []
+
+# Make these still work for non integers on newer ruby versions too
+class Integer
+	alias orig_union |
+	alias orig_inter &
+	alias orig_xor ^
+	def |(b); orig_union b.to_i end
+	def &(b); orig_inter b.to_i end
+	def ^(b); orig_xor b.to_i end
+end
+class Numeric
+	def |(b); to_i.orig_union b end
+	def &(b); to_i.orig_inter b end
+	def ^(b); to_i.orig_xor b end
+	def ~; ~to_i end
+end
+
 class Gtype
 	def go
 		$stack<<self
@@ -8,7 +32,7 @@ class Gtype
 	def val
 		@val
 	end
-	
+
 	'+-|&^'.each_byte{|i|
 		eval'def %c(rhs)
 			if rhs.class != self.class
@@ -63,7 +87,7 @@ class Gint < Gtype
 			to_gs.to_s.compile
 		end,b]
 	end
-	
+
 	def ~
 		Gint.new(~@val)
 	end
@@ -78,8 +102,14 @@ class Gint < Gtype
 	def equalop(rhs)
 		Gint.new(@val == rhs.val)
 	end
-	def question(b)
-		Gint.new(@val**b.val)
+	if ARGV.include? "-r"
+		def question(b)
+			Gint.new(@val**(b.val<0 ? b.val.to_r : b.val))
+		end
+	else
+		def question(b)
+			Gint.new(@val**(b.val<0 ? b.val.to_f : b.val))
+		end
 	end
 	def base(a)
 		if Garray===a
@@ -117,15 +147,7 @@ class Garray < Gtype
 	def to_gs
 		@val.inject(Gstring.new("")){|s,i|s+i.to_gs}
 	end
-	def flatten #maybe name to_a ?		
-# 		Garray.new(@val.inject([]){|s,i|s+case i
-# 			when Gstring then i.val
-# 			when Gint then [i]
-# 			when Garray then i.flatten.val
-# 			when Gblock then i.val
-# 			end
-# 		})
-# 	end
+	def flatten #maybe name to_a ?
 		#use Peter Taylor's fix to avoid quadratic flatten times
 		Garray.new(flatten_append([]))
 	end
@@ -154,7 +176,7 @@ class Garray < Gtype
 			[(self*Gstring.new(' ')).to_s.compile,b]
 		end
 	end
-	
+
 	def leftparen
 		[factory(@val[1..-1]),@val[0]]
 	end
@@ -318,7 +340,7 @@ class Gblock < Garray
 	def coerce(b)
 		b.coerce(self).reverse
 	end
-	
+
 	def +(b)
 		if b.class != self.class
 			a,b=coerce(b)
@@ -389,6 +411,7 @@ class Array
 	end
 	include Comparable
 end
+
 code=gets(nil)||''
 $_=$stdin.isatty ? '' : $stdin.read
 $stack = [Gstring.new($_)]
