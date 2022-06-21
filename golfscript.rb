@@ -104,7 +104,7 @@ class Gint < Gtype
 	end
 	if ARGV.include? "-r"
 		def question(b)
-			Gint.new(@val**(b.val<0 ? b.val.to_r : b.val))
+		   Gint.new((b.val<0 && @val.equal?(1) ? 1r : @val) ** b.val)
 		end
 	else
 		def question(b)
