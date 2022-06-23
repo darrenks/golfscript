@@ -26,7 +26,7 @@ class Numeric
 end
 
 class Gtype
-	def initialize_copy(other); @val = other.val.dup; end
+  def initialize_copy(other); @val = other.val.dup; end
   def go
     $stack<<self
   end
@@ -143,21 +143,21 @@ class Garray < Gtype
     @val = a || []
   end
   def concat(rhs)
-		if rhs.class != self.class
-			a,b=coerce(rhs)
-			a+b
-		else
-			@val.concat(rhs.val)
-			self
-		end
-	end
+    if rhs.class != self.class
+      a,b=coerce(rhs)
+      a+b
+    else
+      @val.concat(rhs.val)
+      self
+    end
+  end
   def factory(a)
     Garray.new(a)
   end
   def to_gs
     r = []
-		@val.each {|i| r.concat(i.to_gs.val) }
-		Gstring.new(r)
+    @val.each {|i| r.concat(i.to_gs.val) }
+    Gstring.new(r)
   end
   def flatten #maybe name to_a ?
     #use Peter Taylor's fix to avoid quadratic flatten times
@@ -203,8 +203,8 @@ class Garray < Gtype
       return Garray.new(@val.map{|n|Gstring.new([n])})*b if self.class == Gstring
       return b.factory([]) if @val.size<1
       r=@val.first.dup
-			r,x=r.coerce(b) if r.class != b.class #for size 1
-			@val[1..-1].each{|i|r=r.concat(b); r=r.concat(i)}
+      r,x=r.coerce(b) if r.class != b.class #for size 1
+      @val[1..-1].each{|i|r=r.concat(b); r=r.concat(i)}
       r
     end
   end
@@ -455,8 +455,8 @@ class String
   end
 end
 def gpop
-	i=$lb.size
-	$lb[i] -= 1 while i>0 && $lb[i-=1] >= $stack.size
+  i=$lb.size
+  $lb[i] -= 1 while i>0 && $lb[i-=1] >= $stack.size
   $stack.pop
 end
 def gpush a
