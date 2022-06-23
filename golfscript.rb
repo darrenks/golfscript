@@ -26,6 +26,7 @@ class Numeric
 end
 
 class Gtype
+	def initialize_copy(other); @val = other.val.dup; end
   def go
     $stack<<self
   end
@@ -141,11 +142,22 @@ class Garray < Gtype
   def initialize(a)
     @val = a || []
   end
+  def concat(rhs)
+		if rhs.class != self.class
+			a,b=coerce(rhs)
+			a+b
+		else
+			@val.concat(rhs.val)
+			self
+		end
+	end
   def factory(a)
     Garray.new(a)
   end
   def to_gs
-    @val.inject(Gstring.new("")){|s,i|s+i.to_gs}
+    r = []
+		@val.each {|i| r.concat(i.to_gs.val) }
+		Gstring.new(r)
   end
   def flatten #maybe name to_a ?
     #use Peter Taylor's fix to avoid quadratic flatten times
@@ -188,11 +200,11 @@ class Garray < Gtype
       factory(@val*b.val)
     else
       return b*self if self.class == Gstring && b.class == Garray
-      return self/Gint.new(1)*b if self.class == Gstring
+      return Garray.new(@val.map{|n|Gstring.new([n])})*b if self.class == Gstring
       return b.factory([]) if @val.size<1
-      r=@val.first
-      r,x=r.coerce(b) if r.class != b.class #for size 1
-      @val[1..-1].each{|i|r=r+b+i}
+      r=@val.first.dup
+			r,x=r.coerce(b) if r.class != b.class #for size 1
+			@val[1..-1].each{|i|r=r.concat(b); r=r.concat(i)}
       r
     end
   end
@@ -425,7 +437,7 @@ end
 $nprocs=0
 
 class String
-  def compile(tokens=scan(/[a-zA-Z_][a-zA-Z0-9_]*|'(?:\\.|[^'])*'?|"(?:\\.|[^"])*"?|-?[0-9]+|#[^\n\r]*|./m))
+  def compile(tokens=scan(/[a-zA-Z_][a-zA-Z0-9_]*|'(?:\\.|[^'])*'?|"(?:\\.|[^"])*"?|-?[0-9]+|#[^\n\r]*|./mn))
      orig=tokens.dup
     native=""
     while t=tokens.slice!(0)
@@ -443,10 +455,8 @@ class String
   end
 end
 def gpop
-  ($lb.size-1).downto(0){|i|
-    break if $lb[i]<$stack.size
-    $lb[i]-=1
-  }
+	i=$lb.size
+	$lb[i] -= 1 while i>0 && $lb[i-=1] >= $stack.size
   $stack.pop
 end
 def gpush a
