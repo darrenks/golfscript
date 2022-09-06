@@ -39,6 +39,10 @@ if __name__ == "__main__":
         for soln in os.scandir(os.path.join(prob, "gs")):
             date = int(soln.name.split(".")[-2])
             if date < min_date: continue
+
+            # uses nil value from gpop
+            if prob.name == "Stringify index" and soln.name.startswith("Erik"): continue
+
             # Ruby version / float / rational trickery (1**-1 != 1.0)
             if prob.name in ["Cancel fractions", "Divide section"] and soln.name.startswith("irori"): continue
             # I'm sorry! https://github.com/shinh/ags/issues/4
@@ -63,6 +67,7 @@ if __name__ == "__main__":
                         print("\x1b[31mFAIL\x1b[0m", soln.path)
                         print(soln_output[:100], po[:100])
                         last_pass = False
+                        exit(1)
                         fails += 1
                 except subprocess.TimeoutExpired:
                     print("\x1b[33mSLOW\x1b[0m", soln.path)

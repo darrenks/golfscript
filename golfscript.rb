@@ -1,4 +1,4 @@
-#!/usr/bin/ruby
+#!/usr/bin/env ruby
 
 # (c) Copyright 2008 Darren Smith.
 # MIT License.
@@ -7,7 +7,7 @@ if defined? Encoding
   Encoding.default_external="ASCII-8BIT"
 end
 
-$lb = []
+LB = []
 
 # Make these still work for non integers on newer ruby versions too
 class Integer
@@ -28,7 +28,7 @@ end
 class Gtype
   def initialize_copy(other); @val = other.val.dup; end
   def go
-    $stack<<self
+    Stack<<self
   end
   def val
     @val
@@ -131,10 +131,13 @@ class Gint < Gtype
     end
   end
   def leftparen
-    Gint.new(@val-1)
+    Stack<<Gint.new(@val-1)
   end
   def rightparen
-    Gint.new(@val+1)
+    Stack<<Gint.new(@val+1)
+  end
+  def comma
+    Garray.new([*0...@val].map{|i|Gint.new(i)})
   end
 end
 
@@ -176,7 +179,7 @@ class Garray < Gtype
     Gstring.new('[')+Garray.new(@val.map{|i|i.ginspect})*Gstring.new(' ')+Gstring.new(']')
   end
   def go
-    $stack<<self
+    Stack<<self
   end
   def class_id; 1; end
   def coerce(b)
@@ -190,10 +193,10 @@ class Garray < Gtype
   end
 
   def leftparen
-    [factory(@val[1..-1]),@val[0]]
+    Stack.concat [factory(@val[1..-1]),@val[0]]
   end
   def rightparen
-    [factory(@val[0..-2]),@val[-1]]
+    Stack.concat [factory(@val[0..-2]),@val[-1]]
   end
   def *(b)
     if b.class == Gint
@@ -285,6 +288,9 @@ class Garray < Gtype
   def ~
     val
   end
+  def comma
+    Gint.new(@val.size)
+  end
 end
 
 class Gstring < Garray
@@ -334,10 +340,10 @@ end
 class Gblock < Garray
   def initialize(_a,_b=nil)
     @val=Gstring.new(_b).val
-    @native = eval("lambda{#{_a}}")
+    @a=_a
   end
   def go
-    @native.call
+    (@native||=eval("lambda{#{@a}}")).call
   end
   def factory(b)
     Gstring.new(b).to_s.compile
@@ -365,22 +371,22 @@ class Gblock < Garray
     if b.class == Gint
       b.val.times{go}
     else
-      gpush b.val.first
-      (b.val[1..-1]||[]).each{|i|$stack<<i; go}
+      gpush01 b.val.first
+      (b.val[1..-1]||[]).each{|i|Stack<<i; go}
     end
     nil
   end
   def /(b)
     if b.class==Garray||b.class==Gstring
-      b.val.each{|i|gpush i; go}
+      b.val.each{|i|Stack << i; go}
       nil
     else #unfold
       r=[]
       loop{
-        $stack<<$stack.last
+        Stack<<Stack.last
         go
         break if gpop.notop.val!=0;
-        r<<$stack.last
+        r<<Stack.last
         b.go
       }
       gpop
@@ -390,9 +396,9 @@ class Gblock < Garray
   def %(b)
     r=[]
     b.val.each{|i|
-      lb=$stack.size
-      $stack<<i; go
-      r.concat($stack.slice!(lb..$stack.size))
+      lb=Stack.size
+      Stack<<i; go
+      r.concat(Stack.slice!(lb..Stack.size))
     }
     r=Garray.new(r)
     b.class == Gstring ? Gstring.new(r) : r
@@ -403,13 +409,16 @@ class Gblock < Garray
   end
   def sort
     a=gpop
-    a.factory(a.val.sort_by{|i|gpush i; go; gpop})
+    a.factory(a.val.sort_by{|i|Stack<<i; go; gpop})
   end
   def select(a)
-    a.factory(a.val.select{|i|gpush i;go; gpop.notop.val==0})
+    a.factory(a.val.select{|i|Stack<<i;go; gpop.notop.val==0})
   end
   def question(b)
-    b.val.find{|i|gpush i; go; gpop.notop.val==0}
+    b.val.find{|i|Stack<<i; go; gpop.notop.val==0}
+  end
+  def comma
+    self.select(gpop)
   end
 end
 
@@ -426,7 +435,7 @@ end
 
 code=gets(nil)||''
 $_=$stdin.isatty ? '' : $stdin.read
-$stack = [Gstring.new($_)]
+Stack = [Gstring.new($_)]
 $var_lookup={}
 
 def var(name,val=nil)
@@ -442,9 +451,9 @@ class String
     native=""
     while t=tokens.slice!(0)
       native<<case t
-        when "{" then "$stack<<"+var("{#{$nprocs+=1}",compile(tokens))
+        when "{" then "Stack<<"+var("{#{$nprocs+=1}",compile(tokens))
         when "}" then break
-        when ":" then var(tokens.slice!(0))+"=$stack.last"
+        when ":" then var(tokens.slice!(0))+"=Stack.last"
         when /^["']/ then var(t,Gstring.new(eval(t)))+".go"
         when /^-?[0-9]+/ then var(t,Gint.new(t.to_i))+".go"
         else; var(t)+".go"
@@ -454,13 +463,17 @@ class String
     Gblock.new(native,source)
   end
 end
-def gpop
-  i=$lb.size
-  $lb[i] -= 1 while i>0 && $lb[i-=1] >= $stack.size
-  $stack.pop
-end
+# todo wouldn't hurt much timewise to add stack size checking for nice error msg
+Gpop_inline = "i=LB.size;LB[i] -= 1 while i>0 && LB[i-=1] >= Stack.size;a=Stack.pop;"
+eval "def gpop;#{Gpop_inline};end"
+gpopn_inline = "i=LB.size;while i>0 && LB[i-=1] > (new_size = Stack.size-%d);LB[i]=new_size;end;%s=Stack.pop(%d);"
+Gpop2_inline = gpopn_inline % [2,"a,b",2]
+Gpop3_inline = gpopn_inline % [3,"a,b,c",3]
 def gpush a
-  $stack.push(*a) if a
+  Stack.push(*a) if a
+end
+def gpush01 a
+  Stack.push(a) if a
 end
 
 class String
@@ -468,58 +481,54 @@ class String
     Gblock.new(self)
   end
   def cc1
-    ('a=gpop;'+self).cc
+    (Gpop_inline+self).cc
   end
   def cc2
-    ('b=gpop;a=gpop;'+self).cc
+    (Gpop2_inline+self).cc
   end
   def cc3
-    ('c=gpop;b=gpop;a=gpop;'+self).cc
+    (Gpop3_inline+self).cc
   end
   def order
-    ('b=gpop;a=gpop;a,b=b,a if a.class_id<b.class_id;'+self).cc
+    (Gpop2_inline+'a,b=b,a if a.class_id<b.class_id;'+self).cc
   end
 end
 
-var'[','$lb<<$stack.size'.cc
-var']','gpush Garray.new($stack.slice!(($lb.pop||0)..-1))'.cc
+var'[','LB<<Stack.size'.cc
+var']','Stack<<Garray.new(Stack.slice!((LB.pop||0)..-1))'.cc
 var'~','gpush ~a'.cc1
-var'`','gpush a.ginspect'.cc1
+var'`','Stack<<a.ginspect'.cc1
 var';',''.cc1
-var'.','$stack<<a<<a'.cc1
-var'\\','$stack<<b<<a'.cc2
-var'@','$stack<<b<<c<<a'.cc3
-var'+','gpush a+b'.cc2
-var'-','gpush a-b'.cc2
-var'|','gpush a|b'.cc2
-var'&','gpush a&b'.cc2
-var'^','gpush a^b'.cc2
-var'*','gpush a*b'.order
-var'/','gpush a/b'.order
-var'%','gpush a%b'.order
-var'=','gpush a.equalop(b)'.order
-var'<','gpush a<b'.order
-var'>','gpush a>b'.order
-var'!','gpush a.notop'.cc1
-var'?','gpush a.question(b)'.order
-var'$','gpush (a.class==Gint ? $stack[~a.val] : a.sort)'.cc1
-var',','gpush case a
-  when Gint then Garray.new([*0...a.val].map{|i|Gint.new(i)})
-  when Gblock then a.select(gpop)
-  when Garray then Gint.new(a.val.size)
-  end'.cc1
-var')','gpush a.rightparen'.cc1
-var'(','gpush a.leftparen'.cc1
+var'.','Stack<<a<<a'.cc1
+var'\\','Stack<<b<<a'.cc2
+var'@','Stack<<b<<c<<a'.cc3
+var'+','Stack<<a+b'.cc2
+var'-','Stack<<a-b'.cc2
+var'|','Stack<<(a|b)'.cc2
+var'&','Stack<<(a&b)'.cc2
+var'^','Stack<<(a^b)'.cc2
+var'*','gpush01 a*b'.order
+var'/','gpush01 a/b'.order
+var'%','Stack<<a%b'.order
+var'=','gpush01 a.equalop(b)'.order
+var'<','Stack<<(a<b)'.order
+var'>','Stack<<(a>b)'.order
+var'!','Stack<<a.notop'.cc1
+var'?','gpush01 a.question(b)'.order
+var'$','gpush01 (a.class==Gint ? Stack[~a.val] : a.sort)'.cc1
+var',','Stack<<a.comma'.cc1
+var')','a.rightparen'.cc1
+var'(','a.leftparen'.cc1
 
-var'rand','gpush Gint.new(rand([1,a.val].max))'.cc1
-var'abs','gpush Gint.new(a.val.abs)'.cc1
+var'rand','Stack<<Gint.new(rand([1,a.val].max))'.cc1
+var'abs','Stack<<Gint.new(a.val.abs)'.cc1
 var'print','print a.to_gs'.cc1
 var'if',"#{var'!'}.go;(gpop.val==0?a:b).go".cc2
 var'do',"loop{a.go; #{var'!'}.go; break if gpop.val!=0}".cc1
 var'while',"loop{a.go; #{var'!'}.go; break if gpop.val!=0; b.go}".cc2
 var'until',"loop{a.go; #{var'!'}.go; break if gpop.val==0; b.go}".cc2
-var'zip','gpush a.zip'.cc1
-var'base','gpush b.base(a)'.cc2
+var'zip','Stack<<a.zip'.cc1
+var'base','Stack<<b.base(a)'.cc2
 
 '"\n":n;
 {print n print}:puts;
@@ -529,5 +538,5 @@ var'base','gpush b.base(a)'.cc2
 {\!!{!}*}:xor;
 '.compile.go
 code.compile.go
-gpush Garray.new($stack)
+gpush Garray.new(Stack)
 'puts'.compile.go
