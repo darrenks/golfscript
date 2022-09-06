@@ -27,36 +27,36 @@ end
 
 class Gtype
   def initialize_copy(other); @val = other.val.dup; end
-	def go; STACK<<self; end
-	attr_reader :val
-	def addop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.addop(b)) : factory(@val + rhs.val); end
-	def subop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.subop(b)) : factory(@val - rhs.val); end
-	def uniop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.uniop(b)) : factory(@val | rhs.val); end
-	def intop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.intop(b)) : factory(@val & rhs.val); end
-	def difop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.difop(b)) : factory(@val ^ rhs.val); end
-	def ==(rhs); Gtype === rhs && @val==rhs.val; end
-	def eql?(rhs); Gtype === rhs && @val==rhs.val; end
-	def hash; @val.hash; end
-	def <=>(rhs); @val<=>rhs.val; end
-	def notop; self.falsey ? 1 : 0; end
+  def go; STACK<<self; end
+  attr_reader :val
+  def addop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.addop(b)) : factory(@val + rhs.val); end
+  def subop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.subop(b)) : factory(@val - rhs.val); end
+  def uniop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.uniop(b)) : factory(@val | rhs.val); end
+  def intop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.intop(b)) : factory(@val & rhs.val); end
+  def difop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.difop(b)) : factory(@val ^ rhs.val); end
+  def ==(rhs); Gtype === rhs && @val==rhs.val; end
+  def eql?(rhs); Gtype === rhs && @val==rhs.val; end
+  def hash; @val.hash; end
+  def <=>(rhs); @val<=>rhs.val; end
+  def notop; self.falsey ? 1 : 0; end
 end
 
 class Numeric
   def class_id; 0; end
   def addop(rhs); rhs.is_a?(Numeric) ? self + rhs : (a,b=gscoerce(rhs); a.addop(b)); end
-	def subop(rhs); rhs.is_a?(Numeric) ? self - rhs : (a,b=gscoerce(rhs); a.subop(b)); end
-	def uniop(rhs); rhs.is_a?(Numeric) ? self | rhs : (a,b=gscoerce(rhs); a.uniop(b)); end
-	def intop(rhs); rhs.is_a?(Numeric) ? self & rhs : (a,b=gscoerce(rhs); a.intop(b)); end
-	def difop(rhs); rhs.is_a?(Numeric) ? self ^ rhs : (a,b=gscoerce(rhs); a.difop(b)); end
-	def to_gs; Gstring.new(to_s); end
-	def ginspect; to_gs; end
-	def go; Stack<<self; end
-	def notop; self == 0 ? 1 : 0; end
+  def subop(rhs); rhs.is_a?(Numeric) ? self - rhs : (a,b=gscoerce(rhs); a.subop(b)); end
+  def uniop(rhs); rhs.is_a?(Numeric) ? self | rhs : (a,b=gscoerce(rhs); a.uniop(b)); end
+  def intop(rhs); rhs.is_a?(Numeric) ? self & rhs : (a,b=gscoerce(rhs); a.intop(b)); end
+  def difop(rhs); rhs.is_a?(Numeric) ? self ^ rhs : (a,b=gscoerce(rhs); a.difop(b)); end
+  def to_gs; Gstring.new(to_s); end
+  def ginspect; to_gs; end
+  def go; Stack<<self; end
+  def notop; self == 0 ? 1 : 0; end
   def falsey; self == 0; end
-	def ltop(rhs); self < rhs ? 1 : 0; end
-	def gtop(rhs); self > rhs ? 1 : 0; end
-	def equalop(rhs); self == rhs ? 1 : 0; end
-	if ARGV.include? "-r"
+  def ltop(rhs); self < rhs ? 1 : 0; end
+  def gtop(rhs); self > rhs ? 1 : 0; end
+  def equalop(rhs); self == rhs ? 1 : 0; end
+  if ARGV.include? "-r"
     def question(b)
       (b<0 && equal?(1) ? 1r : self) ** b
     end
@@ -65,36 +65,36 @@ class Numeric
       self**(b<0 ? b.to_f : b)
     end
   end
-	def leftparen; Stack<<self-1; end
-	def rightparen; Stack<<self+1; end
-	def gscoerce(b)
-		c = b.class_id
-		[if c == 1
-			Garray.new([self])
-		elsif c == 2
-			to_gs
-		else #Gblock
-			to_gs.to_s.compile
-		end,b]
-	end
-	def base(a)
-		if Garray===a
-			r=0
-			a.val.each{|i|
-				r*=self
-				r+=i
-			}
-			r
-		else
-			i=a.abs
-			r=[]
-			while i!=0
-				r.unshift(i % self)
-				i/=self
-			end
-			Garray.new(r)
-		end
-	end
+  def leftparen; Stack<<self-1; end
+  def rightparen; Stack<<self+1; end
+  def gscoerce(b)
+    c = b.class_id
+    [if c == 1
+      Garray.new([self])
+    elsif c == 2
+      to_gs
+    else #Gblock
+      to_gs.to_s.compile
+    end,b]
+  end
+  def base(a)
+    if Garray===a
+      r=0
+      a.val.each{|i|
+        r*=self
+        r+=i
+      }
+      r
+    else
+      i=a.abs
+      r=[]
+      while i!=0
+        r.unshift(i % self)
+        i/=self
+      end
+      Garray.new(r)
+    end
+  end
   def comma
     Garray.new([*0...self])
   end
@@ -136,25 +136,25 @@ class Garray < Gtype
   end
   def ginspect
     bs = []
-		@val.each{|i| bs << 32; bs.concat(i.ginspect.val) }
-		bs[0] = 91
-		bs << 93
-		Gstring.new(bs)
+    @val.each{|i| bs << 32; bs.concat(i.ginspect.val) }
+    bs[0] = 91
+    bs << 93
+    Gstring.new(bs)
   end
   def go
     Stack<<self
   end
   def class_id; 1; end
-	def gscoerce(b)
-		c = b.class_id
-		if c == 0
-			b.gscoerce(self).reverse
-		elsif c == 2
-			[Gstring.new(self),b]
-		else
-			[(self*Gstring.new(' ')).to_s.compile,b]
-		end
-	end
+  def gscoerce(b)
+    c = b.class_id
+    if c == 0
+      b.gscoerce(self).reverse
+    elsif c == 2
+      [Gstring.new(self),b]
+    else
+      [(self*Gstring.new(' ')).to_s.compile,b]
+    end
+  end
 
   def leftparen
     Stack.concat [factory(@val[1..-1]),@val[0]]
@@ -196,28 +196,28 @@ class Garray < Gtype
     end
   end
   def split(b,no_empty)
-      r=[]
-      i=b.factory([])
-      j=0
-      while j<@val.size
-        if @val[j,b.val.size]==b.val
-          r<<i unless no_empty && i.val.empty?
-          i=b.factory([])
-          j+=b.val.size
-        else
-          i.val<<@val[j]
-          j+=1
-        end
+    r=[]
+    i=b.factory([])
+    j=0
+    while j<@val.size
+      if @val[j,b.val.size]==b.val
+        r<<i unless no_empty && i.val.empty?
+        i=b.factory([])
+        j+=b.val.size
+      else
+        i.val<<@val[j]
+        j+=1
       end
-			r<<i unless no_empty && i.val.empty?
-      Garray.new(r)
+    end
+    r<<i unless no_empty && i.val.empty?
+    Garray.new(r)
   end
-	def falsey; @val.empty?; end
-	def question(b); @val.index(b)||-1; end
-	def equalop(b); Numeric === b ? @val[b] : (@val==b.val ? 1 : 0); end
-	def ltop(b); Numeric === b ? factory(@val[0...b]) : (@val<b.val ? 1 : 0); end
-	def gtop(b); Numeric === b ? factory(@val[[b,-@val.size].max..-1]) : (@val>b.val ? 1 : 0); end
-	def sort; factory(@val.sort); end
+  def falsey; @val.empty?; end
+  def question(b); @val.index(b)||-1; end
+  def equalop(b); Numeric === b ? @val[b] : (@val==b.val ? 1 : 0); end
+  def ltop(b); Numeric === b ? factory(@val[0...b]) : (@val<b.val ? 1 : 0); end
+  def gtop(b); Numeric === b ? factory(@val[[b,-@val.size].max..-1]) : (@val>b.val ? 1 : 0); end
+  def sort; factory(@val.sort); end
   def zip
     r=[]
     @val.size.times{|x|
