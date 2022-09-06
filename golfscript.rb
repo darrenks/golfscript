@@ -27,117 +27,76 @@ end
 
 class Gtype
   def initialize_copy(other); @val = other.val.dup; end
-  def go
-    Stack<<self
-  end
-  def val
-    @val
-  end
-
-  '+-|&^'.each_byte{|i|
-    eval'def %c(rhs)
-      if rhs.class != self.class
-        a,b=coerce(rhs)
-        a %c b
-      else
-        factory(@val %c rhs.val)
-      end
-    end'%([i]*3)
-  }
-  def ==(rhs)
-    @val==rhs.val
-  end
-  def eql?(rhs)
-    @val==rhs.val
-  end
-  def hash
-    @val.hash
-  end
-  def <=>(rhs)
-    @val<=>rhs.val
-  end
+	def go; STACK<<self; end
+	attr_reader :val
+	def addop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.addop(b)) : factory(@val + rhs.val); end
+	def subop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.subop(b)) : factory(@val - rhs.val); end
+	def uniop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.uniop(b)) : factory(@val | rhs.val); end
+	def intop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.intop(b)) : factory(@val & rhs.val); end
+	def difop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.difop(b)) : factory(@val ^ rhs.val); end
+	def ==(rhs); Gtype === rhs && @val==rhs.val; end
+	def eql?(rhs); Gtype === rhs && @val==rhs.val; end
+	def hash; @val.hash; end
+	def <=>(rhs); @val<=>rhs.val; end
+	def notop; self.falsey ? 1 : 0; end
 end
 
-class Gint < Gtype
-  def initialize(i)
-    @val = case i
-      when true then 1
-      when false then 0
-      else;i
-    end
-  end
-  def factory(a)
-    Gint.new(a)
-  end
-  def to_gs
-    Gstring.new(@val.to_s)
-  end
-  def to_int #for pack
-    @val
-  end
-  def ginspect
-    to_gs
-  end
+class Numeric
   def class_id; 0; end
-  def coerce(b)
-    [if b.class == Garray
-      Garray.new([self])
-    elsif b.class == Gstring
-      to_gs
-    else #Gblock
-      to_gs.to_s.compile
-    end,b]
-  end
-
-  def ~
-    Gint.new(~@val)
-  end
-  def notop
-    Gint.new(@val == 0)
-  end
-  '*/%<>'.each_byte{|i|
-    eval'def %c(rhs)
-      Gint.new(@val %c rhs.val)
-    end'%[i,i]
-  }
-  def equalop(rhs)
-    Gint.new(@val == rhs.val)
-  end
-  if ARGV.include? "-r"
+  def addop(rhs); rhs.is_a?(Numeric) ? self + rhs : (a,b=gscoerce(rhs); a.addop(b)); end
+	def subop(rhs); rhs.is_a?(Numeric) ? self - rhs : (a,b=gscoerce(rhs); a.subop(b)); end
+	def uniop(rhs); rhs.is_a?(Numeric) ? self | rhs : (a,b=gscoerce(rhs); a.uniop(b)); end
+	def intop(rhs); rhs.is_a?(Numeric) ? self & rhs : (a,b=gscoerce(rhs); a.intop(b)); end
+	def difop(rhs); rhs.is_a?(Numeric) ? self ^ rhs : (a,b=gscoerce(rhs); a.difop(b)); end
+	def to_gs; Gstring.new(to_s); end
+	def ginspect; to_gs; end
+	def go; Stack<<self; end
+	def notop; self == 0 ? 1 : 0; end
+  def falsey; self == 0; end
+	def ltop(rhs); self < rhs ? 1 : 0; end
+	def gtop(rhs); self > rhs ? 1 : 0; end
+	def equalop(rhs); self == rhs ? 1 : 0; end
+	if ARGV.include? "-r"
     def question(b)
-      Gint.new((b.val<0 && @val.equal?(1) ? 1r : @val) ** b.val)
+      (b<0 && equal?(1) ? 1r : self) ** b
     end
   else
     def question(b)
-      Gint.new(@val**(b.val<0 ? b.val.to_f : b.val))
+      self**(b<0 ? b.to_f : b)
     end
   end
-  def base(a)
-    if Garray===a
-      r=0
-      a.val.each{|i|
-        r*=@val
-        r+=i.val
-      }
-      Gint.new(r)
-    else
-      i=a.val.abs
-      r=[]
-      while i!=0
-        r.unshift Gint.new(i%@val)
-        i/=@val
-      end
-      Garray.new(r)
-    end
-  end
-  def leftparen
-    Stack<<Gint.new(@val-1)
-  end
-  def rightparen
-    Stack<<Gint.new(@val+1)
-  end
+	def leftparen; Stack<<self-1; end
+	def rightparen; Stack<<self+1; end
+	def gscoerce(b)
+		c = b.class_id
+		[if c == 1
+			Garray.new([self])
+		elsif c == 2
+			to_gs
+		else #Gblock
+			to_gs.to_s.compile
+		end,b]
+	end
+	def base(a)
+		if Garray===a
+			r=0
+			a.val.each{|i|
+				r*=self
+				r+=i
+			}
+			r
+		else
+			i=a.abs
+			r=[]
+			while i!=0
+				r.unshift(i % self)
+				i/=self
+			end
+			Garray.new(r)
+		end
+	end
   def comma
-    Garray.new([*0...@val].map{|i|Gint.new(i)})
+    Garray.new([*0...self])
   end
 end
 
@@ -147,8 +106,8 @@ class Garray < Gtype
   end
   def concat(rhs)
     if rhs.class != self.class
-      a,b=coerce(rhs)
-      a+b
+      a,b=gscoerce(rhs)
+      a.addop(b)
     else
       @val.concat(rhs.val)
       self
@@ -168,7 +127,7 @@ class Garray < Gtype
   end
   def flatten_append(prefix)
     @val.inject(prefix){|s,i|case i
-      when Gint then s<<i
+      when Numeric then s<<i
       when Garray then i.flatten_append(s)
       when Gstring then s.concat(i.val)
       when Gblock then s.concat(i.val)
@@ -176,21 +135,26 @@ class Garray < Gtype
     }
   end
   def ginspect
-    Gstring.new('[')+Garray.new(@val.map{|i|i.ginspect})*Gstring.new(' ')+Gstring.new(']')
+    bs = []
+		@val.each{|i| bs << 32; bs.concat(i.ginspect.val) }
+		bs[0] = 91
+		bs << 93
+		Gstring.new(bs)
   end
   def go
     Stack<<self
   end
   def class_id; 1; end
-  def coerce(b)
-    if b.class == Gint
-      b.coerce(self).reverse
-    elsif b.class == Gstring
-      [Gstring.new(self),b]
-    else
-      [(self*Gstring.new(' ')).to_s.compile,b]
-    end
-  end
+	def gscoerce(b)
+		c = b.class_id
+		if c == 0
+			b.gscoerce(self).reverse
+		elsif c == 2
+			[Gstring.new(self),b]
+		else
+			[(self*Gstring.new(' ')).to_s.compile,b]
+		end
+	end
 
   def leftparen
     Stack.concat [factory(@val[1..-1]),@val[0]]
@@ -199,32 +163,45 @@ class Garray < Gtype
     Stack.concat [factory(@val[0..-2]),@val[-1]]
   end
   def *(b)
-    if b.class == Gint
-      factory(@val*b.val)
+    if Numeric === b
+      factory(@val*b)
     else
       return b*self if self.class == Gstring && b.class == Garray
       return Garray.new(@val.map{|n|Gstring.new([n])})*b if self.class == Gstring
       return b.factory([]) if @val.size<1
       r=@val.first.dup
-      r,x=r.coerce(b) if r.class != b.class #for size 1
+      r,x=r.gscoerce(b) if r.class != b.class #for size 1
       @val[1..-1].each{|i|r=r.concat(b); r=r.concat(i)}
       r
     end
   end
   def /(b)
-    if b.class == Gint
+    if Numeric===b
       r=[]
-      a = b.val < 0 ? @val.reverse : @val
-      i = -b = b.val.abs
+      a = b < 0 ? @val.reverse : @val
+      i = -b = b.abs
       r << factory(a[i,b]) while (i+=b)<a.size
       Garray.new(r)
     else
+      split(b,false)
+    end
+  end
+  def %(b)
+    if Numeric === b
+      factory((0..(@val.size-1)/b.abs).inject([]){|s,i|
+        s<<@val[b < 0 ? i*b - 1 : i*b]
+      })
+    else
+      split(b,true)
+    end
+  end
+  def split(b,no_empty)
       r=[]
       i=b.factory([])
       j=0
       while j<@val.size
         if @val[j,b.val.size]==b.val
-          r<<i
+          r<<i unless no_empty && i.val.empty?
           i=b.factory([])
           j+=b.val.size
         else
@@ -232,50 +209,15 @@ class Garray < Gtype
           j+=1
         end
       end
-      r<<i
+			r<<i unless no_empty && i.val.empty?
       Garray.new(r)
-    end
   end
-  def %(b)
-    if b.class == Gint
-      b=b.val
-      factory((0..(@val.size-1)/b.abs).inject([]){|s,i|
-        s<<@val[b < 0 ? i*b - 1 : i*b]
-      })
-    else
-      self/b-Garray.new([Garray.new([])])
-    end
-  end
-  def notop
-    Gint.new(@val.empty?)
-  end
-  def question(b)
-    Gint.new(@val.index(b)||-1)
-  end
-  def equalop(b)
-    if b.class == Gint
-      @val[b.val]
-    else
-      Gint.new(@val==b.val)
-    end
-  end
-  def <(b)
-    if b.class == Gint
-      factory(@val[0...b.val])
-    else
-      Gint.new(@val<b.val)
-    end
-  end
-  def >(b)
-    if b.class == Gint
-      factory(@val[[b.val,-@val.size].max..-1])
-    else
-      Gint.new(@val>b.val)
-    end
-  end
-  def sort
-    factory(@val.sort)
-  end
+	def falsey; @val.empty?; end
+	def question(b); @val.index(b)||-1; end
+	def equalop(b); Numeric === b ? @val[b] : (@val==b.val ? 1 : 0); end
+	def ltop(b); Numeric === b ? factory(@val[0...b]) : (@val<b.val ? 1 : 0); end
+	def gtop(b); Numeric === b ? factory(@val[[b,-@val.size].max..-1]) : (@val>b.val ? 1 : 0); end
+	def sort; factory(@val.sort); end
   def zip
     r=[]
     @val.size.times{|x|
@@ -289,7 +231,7 @@ class Garray < Gtype
     val
   end
   def comma
-    Gint.new(@val.size)
+    @val.size
   end
 end
 
@@ -297,7 +239,7 @@ class Gstring < Garray
   def initialize(a)
     @val=case a
       when NilClass then []
-      when String then a.unpack('C*').map{|i|Gint.new(i)}
+      when String then a.unpack('C*')
       when Array then a
       when Garray then a.flatten.val
     end
@@ -315,20 +257,20 @@ class Gstring < Garray
     @val.pack('C*')
   end
   def class_id; 2; end
-  def coerce(b)
+  def gscoerce(b)
     if b.class == Gblock
       [to_s.compile,b]
     else
-      b.coerce(self).reverse
+      b.gscoerce(self).reverse
     end
   end
   def question(b)
     if b.class == Gstring
-      Gint.new(to_s.index(b.to_s)||-1)
+      to_s.index(b.to_s)||-1
     elsif b.class == Garray
       b.question(self)
     else
-      Gint.new(@val.index(b)||-1)
+      @val.index(b)||-1
     end
   end
   def ~
@@ -350,26 +292,26 @@ class Gblock < Garray
   end
   def class_id; 3; end
   def to_gs
-    Gstring.new("{"+Gstring.new(@val).to_s+"}")
+    Gstring.new(([123]+@val)<<125)
   end
   def ginspect
     to_gs
   end
-  def coerce(b)
-    b.coerce(self).reverse
+  def gscoerce(b)
+    b.gscoerce(self).reverse
   end
 
-  def +(b)
+  def addop(b)
     if b.class != self.class
-      a,b=coerce(b)
-      a+b
+      a,b=gscoerce(b)
+      a.addop b
     else
-      Gstring.new(@val+Gstring.new(" ").val+b.val).to_s.compile
+      (@val+[32]+b.val).pack('C*').compile
     end
   end
   def *(b)
-    if b.class == Gint
-      b.val.times{go}
+    if Numeric===b
+      b.to_i.times{go}
     else
       gpush01 b.val.first
       (b.val[1..-1]||[]).each{|i|Stack<<i; go}
@@ -385,7 +327,7 @@ class Gblock < Garray
       loop{
         Stack<<Stack.last
         go
-        break if gpop.notop.val!=0;
+        break if gpop.falsey;
         r<<Stack.last
         b.go
       }
@@ -412,10 +354,10 @@ class Gblock < Garray
     a.factory(a.val.sort_by{|i|Stack<<i; go; gpop})
   end
   def select(a)
-    a.factory(a.val.select{|i|Stack<<i;go; gpop.notop.val==0})
+    a.factory(a.val.select{|i|Stack<<i;go; !gpop.falsey})
   end
   def question(b)
-    b.val.find{|i|Stack<<i; go; gpop.notop.val==0}
+    b.val.find{|i|Stack<<i; go; gpop.notop==0}
   end
   def comma
     self.select(gpop)
@@ -455,7 +397,7 @@ class String
         when "}" then break
         when ":" then var(tokens.slice!(0))+"=Stack.last"
         when /^["']/ then var(t,Gstring.new(eval(t)))+".go"
-        when /^-?[0-9]+/ then var(t,Gint.new(t.to_i))+".go"
+        when /^-?[0-9]+/ then var(t,t.to_i)+".go"
         else; var(t)+".go"
         end+"\n"
     end
@@ -502,31 +444,31 @@ var';',''.cc1
 var'.','Stack<<a<<a'.cc1
 var'\\','Stack<<b<<a'.cc2
 var'@','Stack<<b<<c<<a'.cc3
-var'+','Stack<<a+b'.cc2
-var'-','Stack<<a-b'.cc2
-var'|','Stack<<(a|b)'.cc2
-var'&','Stack<<(a&b)'.cc2
-var'^','Stack<<(a^b)'.cc2
+var'+','Stack<<a.addop(b)'.cc2
+var'-','Stack<<a.subop(b)'.cc2
+var'|','Stack<<a.uniop(b)'.cc2
+var'&','Stack<<a.intop(b)'.cc2
+var'^','Stack<<a.difop(b)'.cc2
 var'*','gpush01 a*b'.order
 var'/','gpush01 a/b'.order
 var'%','Stack<<a%b'.order
 var'=','gpush01 a.equalop(b)'.order
-var'<','Stack<<(a<b)'.order
-var'>','Stack<<(a>b)'.order
+var'<','Stack<<a.ltop(b)'.order
+var'>','Stack<<a.gtop(b)'.order
 var'!','Stack<<a.notop'.cc1
 var'?','gpush01 a.question(b)'.order
-var'$','gpush01 (a.class==Gint ? Stack[~a.val] : a.sort)'.cc1
+var'$','gpush01 (Numeric===a ? Stack[~a.to_i] : a.sort)'.cc1
 var',','Stack<<a.comma'.cc1
 var')','a.rightparen'.cc1
 var'(','a.leftparen'.cc1
 
-var'rand','Stack<<Gint.new(rand([1,a.val].max))'.cc1
-var'abs','Stack<<Gint.new(a.val.abs)'.cc1
+var'rand','Stack<<rand([1,a].max)'.cc1
+var'abs','Stack<<a.abs'.cc1
 var'print','print a.to_gs'.cc1
-var'if',"#{var'!'}.go;(gpop.val==0?a:b).go".cc2
-var'do',"loop{a.go; #{var'!'}.go; break if gpop.val!=0}".cc1
-var'while',"loop{a.go; #{var'!'}.go; break if gpop.val!=0; b.go}".cc2
-var'until',"loop{a.go; #{var'!'}.go; break if gpop.val==0; b.go}".cc2
+var'if',"#{var'!'}.go;(gpop==0?a:b).go".cc2
+var'do',"loop{a.go; #{var'!'}.go; break if gpop!=0}".cc1
+var'while',"loop{a.go; #{var'!'}.go; break if gpop!=0; b.go}".cc2
+var'until',"loop{a.go; #{var'!'}.go; break if gpop==0; b.go}".cc2
 var'zip','Stack<<a.zip'.cc1
 var'base','Stack<<b.base(a)'.cc2
 
