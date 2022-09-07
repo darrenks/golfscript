@@ -27,7 +27,6 @@ end
 
 class Gtype
   def initialize_copy(other); @val = other.val.dup; end
-  def go; STACK<<self; end
   attr_reader :val
   def addop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.addop(b)) : factory(@val + rhs.val); end
   def subop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.subop(b)) : factory(@val - rhs.val); end
@@ -279,13 +278,99 @@ class Gstring < Garray
   end
 end
 
-class Gblock < Garray
-  def initialize(_a,_b=nil)
-    @val=Gstring.new(_b).val
-    @a=_a
+class RubyCode
+  def initialize(source,safe)
+    @source = source
+    @safe = safe # unsafe if this code could execute a golfscript block
   end
+  attr_reader :source, :safe
   def go
-    (@native||=eval("lambda{#{@a}}")).call
+    (@cc||=eval"lambda{"+@source+"}")[]
+  end
+end
+
+def exit_compiled(stmt_no)
+   "return resume(#{stmt_no+1})"
+end
+def safety_check(stmt_no)
+  "#{exit_compiled(stmt_no)} unless @compiled"
+end
+def wipe_all_compiled
+  Blocks.each{|block|block.compiled = nil; block.call_count = 0}
+end
+def unsafe_assignment(var_name)
+  "#{var_name}==nil || RubyCode===#{var_name} || (Gblock===Stack.last && !(Gblock===#{var_name}))"
+end
+
+Blocks=[]
+
+class Gblock < Garray
+  def initialize(impl,gs_source)
+    @val=Gstring.new(gs_source).val
+    @impl=impl
+    @call_count = 0
+    Blocks<<self
+  end
+  attr_writer :call_count
+  attr_accessor :compiled
+  attr_reader :impl
+  def go
+    return @compiled.call if @compiled
+    @call_count += 1
+    return resume(0) if @call_count < 55
+    # generate ruby code by inlining what each token will do
+    # this code could become invalid because you can assign anything to anything anytime
+    # so be ready to exit out and resume with safe code
+    optimized=@impl.map.with_index{|stmt,stmt_no|
+      type,var_name=*stmt
+      case type
+      when :block
+        "Stack<<"+var_name
+      when :assign
+        "if #{unsafe_assignment(var_name)}; #{var_name}=Stack.last;wipe_all_compiled;#{exit_compiled(stmt_no)};else;#{var_name}=Stack.last;end"
+      when :var
+        case (val=eval(var_name))
+        when NilClass
+          ""
+        when RubyCode
+          "#{val.source};#{val.safe ? '' : safety_check(stmt_no)}"
+        when Gblock
+          "#{var_name}.go;#{safety_check(stmt_no)}"
+        else
+          "Stack<<"+var_name
+        end
+      else;error;end
+    }*"\n"
+
+    # convert a push followed by pop2 to just a pop1
+    optimized.gsub!(/Stack<<([^;\n]*)[;\n]+#{Regexp.escape Gpop2_inline}/){
+      "b="+$1+";"+Gpop1_inline
+    }
+    # remove a push followed by a pop
+    optimized.gsub!(/Stack<<([^;\n]*)[;\n]+#{Regexp.escape Gpop1_inline}/){
+      "a="+$1+";"
+    }
+    @compiled = eval("lambda{#{optimized}}")
+    @compiled.call
+  end
+  def resume(line)
+    return @cc.call if line==0 && @cc
+    source = @impl[line..-1].map{|type,var_name|
+      case type
+      when :block
+        "Stack<<"+var_name
+      when :assign
+        "wipe_all_compiled if #{unsafe_assignment(var_name)};#{var_name}=Stack.last"
+      when :var
+        var_name+".go"
+      else;error;end
+    }*";"
+    if line==0
+      @cc=eval"lambda{#{source}}"
+      @cc.call
+    else
+      eval source
+    end
   end
   def factory(b)
     Gstring.new(b).to_s.compile
@@ -389,25 +474,25 @@ $nprocs=0
 
 class String
   def compile(tokens=scan(/[a-zA-Z_][a-zA-Z0-9_]*|'(?:\\.|[^'])*'?|"(?:\\.|[^"])*"?|-?[0-9]+|#[^\n\r]*|./mn))
-     orig=tokens.dup
-    native=""
+    orig=tokens.dup
+    statements=[]
     while t=tokens.slice!(0)
-      native<<case t
-        when "{" then "Stack<<"+var("{#{$nprocs+=1}",compile(tokens))
+      statements.append case t
+        when "{" then [:block,var("{#{$nprocs+=1}",compile(tokens))] # todo old bug, if setting block and accessing it fix it, e.g. 1:{}; {} should be 1
         when "}" then break
-        when ":" then var(tokens.slice!(0))+"=Stack.last"
-        when /^["']/ then var(t,Gstring.new(eval(t)))+".go"
-        when /^-?[0-9]+/ then var(t,t.to_i)+".go"
-        else; var(t)+".go"
-        end+"\n"
+        when ":" then [:assign,var(tokens.slice!(0))]
+        when /^["']/ then [:var,var(t,Gstring.new(eval(t)))]
+        when /^-?[0-9]+/ then [:var,var(t,t.to_i)]
+        else; [:var,var(t)]
+        end
     end
     source=orig[0,orig.size-tokens.size-(t=="}"?1:0)]*""
-    Gblock.new(native,source)
+    Gblock.new(statements,source)
   end
 end
 # todo wouldn't hurt much timewise to add stack size checking for nice error msg
-Gpop_inline = "i=LB.size;LB[i] -= 1 while i>0 && LB[i-=1] >= Stack.size;a=Stack.pop;"
-eval "def gpop;#{Gpop_inline};end"
+Gpop1_inline = "i=LB.size;LB[i] -= 1 while i>0 && LB[i-=1] >= Stack.size;a=Stack.pop;"
+eval "def gpop;#{Gpop1_inline};end"
 gpopn_inline = "i=LB.size;while i>0 && LB[i-=1] > (new_size = Stack.size-%d);LB[i]=new_size;end;%s=Stack.pop(%d);"
 Gpop2_inline = gpopn_inline % [2,"a,b",2]
 Gpop3_inline = gpopn_inline % [3,"a,b,c",3]
@@ -419,58 +504,73 @@ def gpush01 a
 end
 
 class String
-  def cc
-    Gblock.new(self)
+  def ccs
+    RubyCode.new(self,true)
   end
-  def cc1
-    (Gpop_inline+self).cc
+  def ccu
+    RubyCode.new(self,false)
   end
-  def cc2
-    (Gpop2_inline+self).cc
+  def cc1s
+    (Gpop1_inline+self).ccs
   end
-  def cc3
-    (Gpop3_inline+self).cc
+  def cc1u
+    (Gpop1_inline+self).ccu
   end
-  def order
-    (Gpop2_inline+'a,b=b,a if a.class_id<b.class_id;'+self).cc
+  def cc2s
+    (Gpop2_inline+self).ccs
+  end
+  def cc2u
+    (Gpop2_inline+self).ccu
+  end
+  def cc3s
+    (Gpop3_inline+self).ccs
+  end
+  def cc3u
+    (Gpop3_inline+self).ccu
+  end
+  def orders
+    (Gpop2_inline+'a,b=b,a if a.class_id<b.class_id;'+self).ccs
+  end
+  def orderu
+    (Gpop2_inline+'a,b=b,a if a.class_id<b.class_id;'+self).ccu
   end
 end
 
-var'[','LB<<Stack.size'.cc
-var']','Stack<<Garray.new(Stack.slice!((LB.pop||0)..-1))'.cc
-var'~','gpush ~a'.cc1
-var'`','Stack<<a.ginspect'.cc1
-var';',''.cc1
-var'.','Stack<<a<<a'.cc1
-var'\\','Stack<<b<<a'.cc2
-var'@','Stack<<b<<c<<a'.cc3
-var'+','Stack<<a.addop(b)'.cc2
-var'-','Stack<<a.subop(b)'.cc2
-var'|','Stack<<a.uniop(b)'.cc2
-var'&','Stack<<a.intop(b)'.cc2
-var'^','Stack<<a.difop(b)'.cc2
-var'*','gpush01 a*b'.order
-var'/','gpush01 a/b'.order
-var'%','Stack<<a%b'.order
-var'=','gpush01 a.equalop(b)'.order
-var'<','Stack<<a.ltop(b)'.order
-var'>','Stack<<a.gtop(b)'.order
-var'!','Stack<<a.notop'.cc1
-var'?','gpush01 a.question(b)'.order
-var'$','gpush01 (Numeric===a ? Stack[~a.to_i] : a.sort)'.cc1
-var',','Stack<<a.comma'.cc1
-var')','a.rightparen'.cc1
-var'(','a.leftparen'.cc1
+var'[','LB<<Stack.size'.ccs
+var']','Stack<<Garray.new(Stack.slice!((LB.pop||0)..-1))'.ccs
+var'~','gpush ~a'.cc1u
+var'`','Stack<<a.ginspect'.cc1s
+var';',''.cc1s
+var'.','Stack<<a;Stack<<a'.cc1s
+var'\\','Stack<<b;Stack<<a'.cc2s
+var'@','Stack<<b<<c;Stack<<a'.cc3s
+var'+','Stack<<a.addop(b)'.cc2s
+var'-','Stack<<a.subop(b)'.cc2s
+var'|','Stack<<a.uniop(b)'.cc2s
+var'&','Stack<<a.intop(b)'.cc2s
+var'^','Stack<<a.difop(b)'.cc2s
+var'*','gpush01 a*b'.orderu
+var'/','gpush01 a/b'.orderu
+var'%','Stack<<a%b'.orderu
+var'=','gpush01 a.equalop(b)'.orderu
+var'<','Stack<<a.ltop(b)'.orders
+var'>','Stack<<a.gtop(b)'.orders
+var'!','Stack<<a.notop'.cc1s
+var'?','gpush01 a.question(b)'.orderu
+var'$','gpush01 (Numeric===a ? Stack[~a.to_i] : a.sort)'.cc1u
+var',','Stack<<a.comma'.cc1u
+var')','a.rightparen'.cc1s
+var'(','a.leftparen'.cc1s
 
-var'rand','Stack<<rand([1,a].max)'.cc1
-var'abs','Stack<<a.abs'.cc1
-var'print','print a.to_gs'.cc1
-var'if',"#{var'!'}.go;(gpop==0?a:b).go".cc2
-var'do',"loop{a.go; #{var'!'}.go; break if gpop!=0}".cc1
-var'while',"loop{a.go; #{var'!'}.go; break if gpop!=0; b.go}".cc2
-var'until',"loop{a.go; #{var'!'}.go; break if gpop==0; b.go}".cc2
-var'zip','Stack<<a.zip'.cc1
-var'base','Stack<<b.base(a)'.cc2
+var'rand','Stack<<rand([1,a].max)'.cc1s
+var'abs','Stack<<a.abs'.cc1s
+var'print','print a.to_gs'.cc1s
+var'if',"#{var'!'}.go;(gpop==0?a:b).go".cc2u
+var'do',"loop{a.go; #{var'!'}.go; break if gpop!=0}".cc1u
+var'while',"loop{a.go; #{var'!'}.go; break if gpop!=0; b.go}".cc2u
+var'until',"loop{a.go; #{var'!'}.go; break if gpop==0; b.go}".cc2u
+var'zip','Stack<<a.zip'.cc1s
+var'base','Stack<<b.base(a)'.cc2s
 
 '"\n":n;
 {print n print}:puts;
@@ -482,3 +582,4 @@ var'base','Stack<<b.base(a)'.cc2
 code.compile.go
 gpush Garray.new(Stack)
 'puts'.compile.go
+
