@@ -42,6 +42,7 @@ end
 
 class Numeric
   def class_id; 0; end
+  def unsafe_assignment; false; end
   def addop(rhs); rhs.is_a?(Numeric) ? self + rhs : (a,b=gscoerce(rhs); a.addop(b)); end
   def subop(rhs); rhs.is_a?(Numeric) ? self - rhs : (a,b=gscoerce(rhs); a.subop(b)); end
   def uniop(rhs); rhs.is_a?(Numeric) ? self | rhs : (a,b=gscoerce(rhs); a.uniop(b)); end
@@ -103,6 +104,7 @@ class Garray < Gtype
   def initialize(a)
     @val = a || []
   end
+  def unsafe_assignment; false; end
   def concat(rhs)
     if rhs.class != self.class
       a,b=gscoerce(rhs)
@@ -156,9 +158,11 @@ class Garray < Gtype
   end
 
   def leftparen
+    gwarn "left paren on empty list" if @val.empty?
     Stack.concat [factory(@val[1..-1]),@val[0]]
   end
   def rightparen
+    gwarn "right paren on empty list" if @val.empty?
     Stack.concat [factory(@val[0..-2]),@val[-1]]
   end
   def *(b)
@@ -283,9 +287,10 @@ class RubyCode
     @source = source
     @safe = safe # unsafe if this code could execute a golfscript block
   end
+  def unsafe_assignment; true; end
   attr_reader :source, :safe
   def go
-    (@cc||=eval"lambda{"+@source+"}")[]
+    (@cc||=eval"lambda{#{@source}}")[]
   end
 end
 
@@ -298,9 +303,7 @@ end
 def wipe_all_compiled
   Blocks.each{|block|block.compiled = nil; block.call_count = 0}
 end
-def unsafe_assignment(var_name)
-  "#{var_name}==nil || RubyCode===#{var_name} || (Gblock===Stack.last && !(Gblock===#{var_name}))"
-end
+NoEmptyCheck = "(gwarn'cannot assign empty stack';exit(1))if Stack.empty?"
 
 Blocks=[]
 
@@ -311,6 +314,7 @@ class Gblock < Garray
     @call_count = 0
     Blocks<<self
   end
+  def unsafe_assignment; !(Gblock===Stack.last); end
   attr_writer :call_count
   attr_accessor :compiled
   attr_reader :impl
@@ -327,7 +331,7 @@ class Gblock < Garray
       when :block
         "Stack<<"+var_name
       when :assign
-        "if #{unsafe_assignment(var_name)}; #{var_name}=Stack.last;wipe_all_compiled;#{exit_compiled(stmt_no)};else;#{var_name}=Stack.last;end"
+        "#{NoEmptyCheck};if #{var_name}.unsafe_assignment; #{var_name}=Stack.last;wipe_all_compiled;#{exit_compiled(stmt_no)};else;#{var_name}=Stack.last;end"
       when :var
         case (val=eval(var_name))
         when NilClass
@@ -360,9 +364,9 @@ class Gblock < Garray
       when :block
         "Stack<<"+var_name
       when :assign
-        "wipe_all_compiled if #{unsafe_assignment(var_name)};#{var_name}=Stack.last"
+        "#{NoEmptyCheck};wipe_all_compiled if #{var_name}.unsafe_assignment;#{var_name}=Stack.last"
       when :var
-        var_name+".go"
+        "#{var_name}.go"
       else;error;end
     }*";"
     if line==0
@@ -452,6 +456,7 @@ end
 class NilClass
   def go
   end
+  def unsafe_assignment; true; end
 end
 class Array
   def ^(rhs)
@@ -472,30 +477,51 @@ end
 
 $nprocs=0
 
+IdentifierRx = /[a-zA-Z_][a-zA-Z0-9_]*/mn
+StringRx = /'(?:\\.|[^'])*'?|"(?:\\.|[^"])*"?/mn
+NumRx = /-?[0-9]+/mn
+CommentRx = /#[^\n\r]*/mn
+TokenRx = /#{IdentifierRx}|#{StringRx}|#{NumRx}|#{CommentRx}|./mn
+
 class String
-  def compile(tokens=scan(/[a-zA-Z_][a-zA-Z0-9_]*|'(?:\\.|[^'])*'?|"(?:\\.|[^"])*"?|-?[0-9]+|#[^\n\r]*|./mn))
-    orig=tokens.dup
+  def compile
+    tokens=scan(TokenRx)
+    block,ind=*compile_helper(tokens,0)
+    block
+  end
+  def compile_helper(tokens,ind)
     statements=[]
-    while t=tokens.slice!(0)
+    last=nil
+    begin_no=ind
+    while t=tokens[-1+ind+=1]
+      last=t
       statements.append case t
-        when "{" then [:block,var("{#{$nprocs+=1}",compile(tokens))] # todo old bug, if setting block and accessing it fix it, e.g. 1:{}; {} should be 1
-        when "}" then break
-        when ":" then [:assign,var(tokens.slice!(0))]
+        when "{" then
+          block,ind = *compile_helper(tokens,ind)
+          [:block,var("{#{$nprocs+=1}",block)]
+        when "}" then
+          pwarn "unmatched }", tokens, ind if begin_no == 0
+          break
+        when ":"
+          pwarn "setting the space token (probably accidental)", tokens, ind if tokens[ind]==" "
+          pwarn "expecting identifier, found EOF", tokens, ind if ind>=tokens.size
+          pwarn "cannot really set "+tokens[ind], tokens, ind if "{}:".chars.include? tokens[ind]
+          [:assign,var(tokens[-1+ind+=1])]
         when /^["']/ then [:var,var(t,Gstring.new(eval(t)))]
-        when /^-?[0-9]+/ then [:var,var(t,t.to_i)]
+        when /^-?[0-9]/ then [:var,var(t,t.to_i)]
         else; [:var,var(t)]
         end
     end
-    source=orig[0,orig.size-tokens.size-(t=="}"?1:0)]*""
-    Gblock.new(statements,source)
+    pwarn "unmatched {", tokens, begin_no if begin_no>0 && last != "}"
+    source=tokens[begin_no...ind-(t=="}"?1:0)]*""
+    [Gblock.new(statements,source), ind]
   end
 end
-# todo wouldn't hurt much timewise to add stack size checking for nice error msg
-Gpop1_inline = "i=LB.size;LB[i] -= 1 while i>0 && LB[i-=1] >= Stack.size;a=Stack.pop;"
+Gpop1_inline = "gwarn'pop on empty stack' if Stack.empty?;i=LB.size;LB[i] -= 1 while i>0 && LB[i-=1] >= Stack.size;a=Stack.pop;"
 eval "def gpop;#{Gpop1_inline};end"
-gpopn_inline = "i=LB.size;while i>0 && LB[i-=1] > (new_size = Stack.size-%d);LB[i]=new_size;end;%s=Stack.pop(%d);"
-Gpop2_inline = gpopn_inline % [2,"a,b",2]
-Gpop3_inline = gpopn_inline % [3,"a,b,c",3]
+gpopn_inline = "(gwarn'pop on empty stack';Stack.replace(([nil]*3+Stack.dup)[-%d..-1])) if Stack.size<%d;i=LB.size;while i>0 && LB[i-=1] > (new_size = Stack.size-%d);LB[i]=new_size;end;%s=Stack.pop(%d);"
+Gpop2_inline = gpopn_inline % [2,2,2,"a,b",2]
+Gpop3_inline = gpopn_inline % [3,3,3,"a,b,c",3]
 def gpush a
   Stack.push(*a) if a
 end
@@ -534,6 +560,23 @@ class String
   def orderu
     (Gpop2_inline+'a,b=b,a if a.class_id<b.class_id;'+self).ccu
   end
+end
+
+Warned = {}
+
+def gwarn(msg)
+  return if Warned[msg]
+  Warned[msg] = true
+  warn("Warning: "+msg)
+end
+
+def pwarn(msg,tokens,ind)
+  return if Warned[msg]
+  Warned[msg] = true
+  before=tokens[0...ind-1]*""
+  line_no = before.count("\n")+1
+  char_no = (before.lines.last||[]).size+1
+  gwarn "#{line_no}:#{char_no}:(#{tokens[ind-1]}) #{msg}"
 end
 
 var'[','LB<<Stack.size'.ccs

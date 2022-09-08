@@ -40,9 +40,6 @@ if __name__ == "__main__":
             date = int(soln.name.split(".")[-2])
             if date < min_date: continue
 
-            # uses nil value from gpop
-            if prob.name == "Stringify index" and soln.name.startswith("Erik"): continue
-
             # Ruby version / float / rational trickery (1**-1 != 1.0)
             if prob.name in ["Cancel fractions", "Divide section"] and soln.name.startswith("irori"): continue
             # I'm sorry! https://github.com/shinh/ags/issues/4
