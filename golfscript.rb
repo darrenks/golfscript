@@ -465,11 +465,7 @@ class Array
   include Comparable
 end
 
-code=gets(nil)||''
-$_=$stdin.isatty ? '' : $stdin.read
-Stack = [Gstring.new($_)]
 $var_lookup={}
-
 def var(name,val=nil)
   eval"#{s="$_#{$var_lookup[name]||=$var_lookup.size}"}||=val"
   s
@@ -483,21 +479,41 @@ NumRx = /-?[0-9]+/mn
 CommentRx = /#[^\n\r]*/mn
 TokenRx = /#{IdentifierRx}|#{StringRx}|#{NumRx}|#{CommentRx}|./mn
 
+def lex(s)
+  s.scan(TokenRx)
+end
+
 class String
-  def compile
-    tokens=scan(TokenRx)
-    block,ind=*compile_helper(tokens,0)
+  def compile(interactive_mode = false)
+    tokens=lex(self)
+    block,ind=compile_helper(tokens,0,0,interactive_mode)
     block
   end
-  def compile_helper(tokens,ind)
+  def compile_helper(tokens,ind,depth,interactive_mode)
     statements=[]
     last=nil
     begin_no=ind
-    while t=tokens[-1+ind+=1]
+    loop {
+      if ind >= tokens.size
+        break if begin_no==0
+        if interactive_mode
+          while ind >= tokens.size
+            print "  "*depth + "> "
+            s=gets
+            exit(0) if !s
+            tokens.concat lex(s)
+          end
+        else
+          pwarn "unmatched {", tokens, begin_no
+          break
+        end
+      end
+      t=tokens[-1+ind+=1]
+
       last=t
       statements.append case t
         when "{" then
-          block,ind = *compile_helper(tokens,ind)
+          block,ind = *compile_helper(tokens,ind,depth+1,interactive_mode)
           [:block,var("{#{$nprocs+=1}",block)]
         when "}" then
           pwarn "unmatched }", tokens, ind if begin_no == 0
@@ -510,10 +526,9 @@ class String
         when /^["']/ then [:var,var(t,Gstring.new(eval(t)))]
         when /^-?[0-9]/ then [:var,var(t,t.to_i)]
         else; [:var,var(t)]
-        end
-    end
-    pwarn "unmatched {", tokens, begin_no if begin_no>0 && last != "}"
-    source=tokens[begin_no...ind-(t=="}"?1:0)]*""
+      end
+    }
+    source=tokens[begin_no...ind-(last=="}"?1:0)]*""
     [Gblock.new(statements,source), ind]
   end
 end
@@ -615,6 +630,8 @@ var'until',"loop{a.go; #{var'!'}.go; break if gpop==0; b.go}".cc2u
 var'zip','Stack<<a.zip'.cc1s
 var'base','Stack<<b.base(a)'.cc2s
 
+Stack = []
+
 '"\n":n;
 {print n print}:puts;
 {`puts}:p;
@@ -622,7 +639,20 @@ var'base','Stack<<b.base(a)'.cc2s
 {1$\if}:or;
 {\!!{!}*}:xor;
 '.compile.go
-code.compile.go
-gpush Garray.new(Stack)
-'puts'.compile.go
 
+if ARGV.empty?
+  puts "Golfscript Interactive Mode"
+  while (print "> "; code=gets)
+    code.compile(true).go
+    gpush Garray.new(Stack)
+    'p'.compile.go
+  end
+else
+  code=gets(nil)||''
+  input=$stdin.isatty ? '' : $stdin.read
+  Stack << Gstring.new(input)
+
+  code.compile.go
+  gpush Garray.new(Stack)
+  'puts'.compile.go
+end
