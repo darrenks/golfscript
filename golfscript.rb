@@ -25,6 +25,11 @@ class Numeric
   def ~; ~to_i end
 end
 
+GIntId = 0
+GArrayId = 1
+GStringId = 2
+GBlockId = 3
+
 class Gtype
   def initialize_copy(other); @val = other.val.dup; end
   attr_reader :val
@@ -33,15 +38,16 @@ class Gtype
   def uniop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.uniop(b)) : factory(@val | rhs.val); end
   def intop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.intop(b)) : factory(@val & rhs.val); end
   def difop(rhs); rhs.class != self.class ? (a,b=gscoerce(rhs); a.difop(b)) : factory(@val ^ rhs.val); end
-  def ==(rhs); Gtype === rhs && @val==rhs.val; end
-  def eql?(rhs); Gtype === rhs && @val==rhs.val; end
+  def ==(rhs); rhs.class_id!=GIntId && @val==rhs.val; end
+  def eql?(rhs); rhs.class_id!=GIntId && @val==rhs.val; end
   def hash; @val.hash; end
   def <=>(rhs); @val<=>rhs.val; end
   def notop; self.falsey ? 1 : 0; end
 end
 
 class Numeric
-  def class_id; 0; end
+  def class_id; GIntId; end
+  def is_garray; false; end
   def unsafe_assignment; false; end
   def addop(rhs); rhs.is_a?(Numeric) ? self + rhs : (a,b=gscoerce(rhs); a.addop(b)); end
   def subop(rhs); rhs.is_a?(Numeric) ? self - rhs : (a,b=gscoerce(rhs); a.subop(b)); end
@@ -78,7 +84,7 @@ class Numeric
     end,b]
   end
   def base(a)
-    if Garray===a
+    if a.is_garray
       r=0
       a.val.each{|i|
         r*=self
@@ -104,6 +110,7 @@ class Garray < Gtype
   def initialize(a)
     @val = a || []
   end
+  def is_garray; true; end
   def unsafe_assignment; false; end
   def concat(rhs)
     if rhs.class != self.class
@@ -145,7 +152,7 @@ class Garray < Gtype
   def go
     Stack<<self
   end
-  def class_id; 1; end
+  def class_id; GArrayId; end
   def gscoerce(b)
     c = b.class_id
     if c == 0
@@ -166,7 +173,7 @@ class Garray < Gtype
     Stack.concat [factory(@val[0..-2]),@val[-1]]
   end
   def *(b)
-    if Numeric === b
+    if b.class_id == GIntId
       factory(@val*b)
     else
       return b*self if self.class == Gstring && b.class == Garray
@@ -179,7 +186,7 @@ class Garray < Gtype
     end
   end
   def /(b)
-    if Numeric===b
+    if b.class_id==GIntId
       r=[]
       a = b < 0 ? @val.reverse : @val
       i = -b = b.abs
@@ -190,7 +197,7 @@ class Garray < Gtype
     end
   end
   def %(b)
-    if Numeric === b
+    if b.class_id==GIntId
       factory((0..(@val.size-1)/b.abs).inject([]){|s,i|
         s<<@val[b < 0 ? i*b - 1 : i*b]
       })
@@ -217,9 +224,9 @@ class Garray < Gtype
   end
   def falsey; @val.empty?; end
   def question(b); @val.index(b)||-1; end
-  def equalop(b); Numeric === b ? @val[b] : (@val==b.val ? 1 : 0); end
-  def ltop(b); Numeric === b ? factory(@val[0...b]) : (@val<b.val ? 1 : 0); end
-  def gtop(b); Numeric === b ? factory(@val[[b,-@val.size].max..-1]) : (@val>b.val ? 1 : 0); end
+  def equalop(b); b.class_id==GIntId ? @val[b] : (@val==b.val ? 1 : 0); end
+  def ltop(b); b.class_id==GIntId ? factory(@val[0...b]) : (@val<b.val ? 1 : 0); end
+  def gtop(b); b.class_id==GIntId ? factory(@val[[b,-@val.size].max..-1]) : (@val>b.val ? 1 : 0); end
   def sort; factory(@val.sort); end
   def zip
     r=[]
@@ -259,7 +266,7 @@ class Gstring < Garray
   def to_s
     @val.pack('C*')
   end
-  def class_id; 2; end
+  def class_id; GStringId; end
   def gscoerce(b)
     if b.class == Gblock
       [to_s.compile,b]
@@ -279,6 +286,22 @@ class Gstring < Garray
   def ~
     to_s.compile.go
     nil
+  end
+end
+
+class LazyInput
+  def method_missing(meth, *args, &block)
+    @input ||= (
+      STDERR.puts "waiting for input to proceed, Ctrl-D for proceed"
+      Gstring.new(STDIN.read))
+    @input.send(meth, *args, &block)
+  end
+  undef class
+  def ginspect
+    Gstring.new("LazyInput")
+  end
+  def to_gs
+    Gstring.new("")
   end
 end
 
@@ -314,7 +337,7 @@ class Gblock < Garray
     @call_count = 0
     Blocks<<self
   end
-  def unsafe_assignment; !(Gblock===Stack.last); end
+  def unsafe_assignment; !(Stack.last.class_id==GBlockId); end
   attr_writer :call_count
   attr_accessor :compiled
   attr_reader :impl
@@ -379,7 +402,7 @@ class Gblock < Garray
   def factory(b)
     Gstring.new(b).to_s.compile
   end
-  def class_id; 3; end
+  def class_id; GBlockId; end
   def to_gs
     Gstring.new(([123]+@val)<<125)
   end
@@ -399,7 +422,7 @@ class Gblock < Garray
     end
   end
   def *(b)
-    if Numeric===b
+    if b.class_id==GIntId
       b.to_i.times{go}
     else
       gpush01 b.val.first
@@ -615,7 +638,7 @@ var'<','Stack<<a.ltop(b)'.orders
 var'>','Stack<<a.gtop(b)'.orders
 var'!','Stack<<a.notop'.cc1s
 var'?','gpush01 a.question(b)'.orderu
-var'$','gpush01 (Numeric===a ? Stack[~a.to_i] : a.sort)'.cc1u
+var'$','gpush01 (a.class_id==GIntId ? Stack[~a.to_i] : a.sort)'.cc1u
 var',','Stack<<a.comma'.cc1u
 var')','a.rightparen'.cc1s
 var'(','a.leftparen'.cc1s
@@ -649,8 +672,7 @@ if ARGV.empty?
   end
 else
   code=gets(nil)||''
-  input=$stdin.isatty ? '' : $stdin.read
-  Stack << Gstring.new(input)
+  Stack << (STDIN.isatty ? LazyInput.new : Gstring.new(STDIN.read))
 
   code.compile.go
   gpush Garray.new(Stack)
