@@ -313,8 +313,23 @@ class RubyCode
   def unsafe_assignment; true; end
   attr_reader :source, :safe
   def go
-    (@cc||=eval"lambda{#{@source}}")[]
+    (@cc||=eval"lambda{#{replace_pops @source}}")[]
   end
+end
+
+def gpop(name)
+  gwarn'pop on empty stack from %p'%name if Stack.empty?;i=LB.size;LB[i] -= 1 while i>0 && LB[i-=1] >= Stack.size;a=Stack.pop;
+end
+def gpop_inline(n,name)
+  lhs=[*'a'..'d'][0,n]*","
+  "(gwarn'pop on empty stack from #{name.inspect}';Stack.replace(([nil]*3+Stack.dup)[-#{n}..-1])) if Stack.size<#{n};i=LB.size;while i>0 && LB[i-=1] > (new_size = Stack.size-#{n});LB[i]=new_size;end;#{lhs}=Stack.pop #{n == 1 ? '' : n};"
+end
+
+def replace_pops(code)
+  code
+    .gsub(/POP1{(.*?)}/){ gpop_inline(1,$1) }
+    .gsub(/POP2{(.*?)}/){ gpop_inline(2,$1) }
+    .gsub(/POP3{(.*?)}/){ gpop_inline(3,$1) }
 end
 
 def exit_compiled(stmt_no)
@@ -369,15 +384,10 @@ class Gblock < Garray
       else;error;end
     }*"\n"
 
-    # convert a push followed by pop2 to just a pop1
-    optimized.gsub!(/Stack<<([^;\n]*)[;\n]+#{Regexp.escape Gpop2_inline}/){
-      "b="+$1+";"+Gpop1_inline
-    }
-    # remove a push followed by a pop
-    optimized.gsub!(/Stack<<([^;\n]*)[;\n]+#{Regexp.escape Gpop1_inline}/){
-      "a="+$1+";"
-    }
-    @compiled = eval("lambda{#{optimized}}")
+    optimized.gsub!(/Stack<<([^;\n]*)[;\n]+POP3/, 'c=\1;POP2')
+    optimized.gsub!(/Stack<<([^;\n]*)[;\n]+POP2/, 'b=\1;POP1')
+    optimized.gsub!(/Stack<<([^;\n]*)[;\n]+POP1{.*?}/, 'a=\1;')
+    @compiled = eval("lambda{#{replace_pops optimized}}")
     @compiled.call
   end
   def resume(line)
@@ -437,13 +447,15 @@ class Gblock < Garray
     else #unfold
       r=[]
       loop{
+        gwarn "unfold on empty stack generates nils" if Stack.empty?
         Stack<<Stack.last
         go
-        break if gpop.falsey;
+        break if gpop("unfold condition").falsey;
+        gwarn "unfold on empty stack generates nils" if Stack.empty?
         r<<Stack.last
         b.go
       }
-      gpop
+      gpop("unfold result")
       Garray.new(r)
     end
   end
@@ -462,17 +474,17 @@ class Gblock < Garray
     nil
   end
   def sort
-    a=gpop
-    a.factory(a.val.sort_by{|i|Stack<<i; go; gpop})
+    a=gpop("sort")
+    a.factory(a.val.sort_by{|i|Stack<<i; go; gpop("sort by iteration")})
   end
   def select(a)
-    a.factory(a.val.select{|i|Stack<<i;go; !gpop.falsey})
+    a.factory(a.val.select{|i|Stack<<i;go; !gpop("select iteration").falsey})
   end
   def question(b)
-    b.val.find{|i|Stack<<i; go; gpop.notop==0}
+    b.val.find{|i|Stack<<i; go; gpop("? iteration").notop==0}
   end
   def comma
-    self.select(gpop)
+    self.select(gpop("comma"))
   end
 end
 
@@ -555,11 +567,7 @@ class String
     [Gblock.new(statements,source), ind]
   end
 end
-Gpop1_inline = "gwarn'pop on empty stack' if Stack.empty?;i=LB.size;LB[i] -= 1 while i>0 && LB[i-=1] >= Stack.size;a=Stack.pop;"
-eval "def gpop;#{Gpop1_inline};end"
-gpopn_inline = "(gwarn'pop on empty stack';Stack.replace(([nil]*3+Stack.dup)[-%d..-1])) if Stack.size<%d;i=LB.size;while i>0 && LB[i-=1] > (new_size = Stack.size-%d);LB[i]=new_size;end;%s=Stack.pop(%d);"
-Gpop2_inline = gpopn_inline % [2,2,2,"a,b",2]
-Gpop3_inline = gpopn_inline % [3,3,3,"a,b,c",3]
+
 def gpush a
   Stack.push(*a) if a
 end
@@ -567,37 +575,11 @@ def gpush01 a
   Stack.push(a) if a
 end
 
-class String
-  def ccs
-    RubyCode.new(self,true)
-  end
-  def ccu
-    RubyCode.new(self,false)
-  end
-  def cc1s
-    (Gpop1_inline+self).ccs
-  end
-  def cc1u
-    (Gpop1_inline+self).ccu
-  end
-  def cc2s
-    (Gpop2_inline+self).ccs
-  end
-  def cc2u
-    (Gpop2_inline+self).ccu
-  end
-  def cc3s
-    (Gpop3_inline+self).ccs
-  end
-  def cc3u
-    (Gpop3_inline+self).ccu
-  end
-  def orders
-    (Gpop2_inline+'a,b=b,a if a.class_id<b.class_id;'+self).ccs
-  end
-  def orderu
-    (Gpop2_inline+'a,b=b,a if a.class_id<b.class_id;'+self).ccu
-  end
+def cc(n,name,impl,safe=true)
+  var name,RubyCode.new(n == 0 ? impl : "POP#{n}{#{name}}" + impl,safe)
+end
+def order(name,impl,safe=true)
+  cc 2,name,'a,b=b,a if a.class_id<b.class_id;'+impl,safe
 end
 
 Warned = {}
@@ -617,41 +599,42 @@ def pwarn(msg,tokens,ind)
   gwarn "#{line_no}:#{char_no}:(#{tokens[ind-1]}) #{msg}"
 end
 
-var'[','LB<<Stack.size'.ccs
-var']','Stack<<Garray.new(Stack.slice!((LB.pop||0)..-1))'.ccs
-var'~','gpush ~a'.cc1u
-var'`','Stack<<a.ginspect'.cc1s
-var';',''.cc1s
-var'.','Stack<<a;Stack<<a'.cc1s
-var'\\','Stack<<b;Stack<<a'.cc2s
-var'@','Stack<<b<<c;Stack<<a'.cc3s
-var'+','Stack<<a.addop(b)'.cc2s
-var'-','Stack<<a.subop(b)'.cc2s
-var'|','Stack<<a.uniop(b)'.cc2s
-var'&','Stack<<a.intop(b)'.cc2s
-var'^','Stack<<a.difop(b)'.cc2s
-var'*','gpush01 a*b'.orderu
-var'/','gpush01 a/b'.orderu
-var'%','Stack<<a%b'.orderu
-var'=','gpush01 a.equalop(b)'.orderu
-var'<','Stack<<a.ltop(b)'.orders
-var'>','Stack<<a.gtop(b)'.orders
-var'!','Stack<<a.notop'.cc1s
-var'?','gpush01 a.question(b)'.orderu
-var'$','gpush01 (a.class_id==GIntId ? Stack[~a.to_i] : a.sort)'.cc1u
-var',','Stack<<a.comma'.cc1u
-var')','a.rightparen'.cc1s
-var'(','a.leftparen'.cc1s
+Unsafe = false
+cc 0,'[','LB<<Stack.size'
+cc 0,']','Stack<<Garray.new(Stack.slice!((LB.pop||0)..-1))'
+cc 1,'~','gpush ~a',Unsafe
+cc 1,'`','Stack<<a.ginspect'
+cc 1,';',''
+cc 1,'.','Stack<<a;Stack<<a'
+cc 2,'\\','Stack<<b;Stack<<a'
+cc 3,'@','Stack<<b<<c;Stack<<a'
+cc 2,'+','Stack<<a.addop(b)'
+cc 2,'-','Stack<<a.subop(b)'
+cc 2,'|','Stack<<a.uniop(b)'
+cc 2,'&','Stack<<a.intop(b)'
+cc 2,'^','Stack<<a.difop(b)'
+order '*','gpush01 a*b',Unsafe
+order '/','gpush01 a/b',Unsafe
+order '%','Stack<<a%b',Unsafe
+order '=','gpush01 a.equalop(b)',Unsafe
+order '<','Stack<<a.ltop(b)'
+order '>','Stack<<a.gtop(b)'
+cc 1,'!','Stack<<a.notop'
+order '?','gpush01 a.question(b)',Unsafe
+cc 1,'$','gpush01 (a.class_id==GIntId ? Stack[~a.to_i] : a.sort)',Unsafe
+cc 1,',','Stack<<a.comma',Unsafe
+cc 1,')','a.rightparen'
+cc 1,'(','a.leftparen'
 
-var'rand','Stack<<rand([1,a].max)'.cc1s
-var'abs','Stack<<a.abs'.cc1s
-var'print','print a.to_gs'.cc1s
-var'if',"#{var'!'}.go;(gpop==0?a:b).go".cc2u
-var'do',"loop{a.go; #{var'!'}.go; break if gpop!=0}".cc1u
-var'while',"loop{a.go; #{var'!'}.go; break if gpop!=0; b.go}".cc2u
-var'until',"loop{a.go; #{var'!'}.go; break if gpop==0; b.go}".cc2u
-var'zip','Stack<<a.zip'.cc1s
-var'base','Stack<<b.base(a)'.cc2s
+cc 1,'rand','Stack<<rand([1,a].max)'
+cc 1,'abs','Stack<<a.abs'
+cc 1,'print','print a.to_gs'
+cc 2,'if',"#{var'!'}.go;(gpop('if')==0?a:b).go",Unsafe
+cc 1,'do',"loop{a.go; #{var'!'}.go; break if gpop('do')!=0}",Unsafe
+cc 2,'while',"loop{a.go; #{var'!'}.go; break if gpop('while')!=0; b.go}",Unsafe
+cc 2,'until',"loop{a.go; #{var'!'}.go; break if gpop('unitl')==0; b.go}",Unsafe
+cc 1,'zip','Stack<<a.zip'
+cc 2,'base','Stack<<b.base(a)'
 
 Stack = []
 
