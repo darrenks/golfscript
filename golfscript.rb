@@ -3,6 +3,41 @@
 # (c) Copyright 2008 Darren Smith.
 # MIT License.
 
+args = ARGV
+if (i=ARGV.index("--"))
+  gs_args = args[i+1..-1]
+  args = args[0,i]
+else
+  gs_args = []
+end
+
+def usage
+  STDERR.puts "usage: ruby #$0 filename.gs? options*
+    filename.gs to run file or omit for interactive
+    -q: no implicit output
+    -n: no \"\#{ruby code eval}\"
+    -r: int -1 ? generates rational instead of float
+    --: all following args are problem input (single array of strings on stack, no STDIN)"
+  exit(1)
+end
+
+options,filenames = args.partition{|arg|arg[0]=="-"}
+RationalOption = options.include? "-r"
+QuineOption = options.include? "-q"
+NoInterpolationOption = options.include? "-n"
+
+AllowedOptions = %w"r q n"
+unknown_options = options.reject{|option|AllowedOptions.include? option[1..-1]}
+if !unknown_options.empty?
+  STDERR.puts "unknown options %p" % [unknown_options]
+  usage
+end
+
+if filenames.size > 1
+  STDERR.puts "multiple filenames present, there can only be one %p" % [filenames]
+  usage
+end
+
 if defined? Encoding
   Encoding.default_external="ASCII-8BIT"
 end
@@ -62,7 +97,7 @@ class Numeric
   def ltop(rhs); self < rhs ? 1 : 0; end
   def gtop(rhs); self > rhs ? 1 : 0; end
   def equalop(rhs); self == rhs ? 1 : 0; end
-  if ARGV.include? "-r"
+  if RationalOption
     def question(b)
       (b<0 && equal?(1) ? 1r : self) ** b
     end
@@ -534,7 +569,7 @@ class String
         if interactive_mode
           while ind >= tokens.size
             print "  "*depth + "> "
-            s=gets
+            s=STDIN.gets
             exit(0) if !s
             tokens.concat lex(s)
           end
@@ -558,7 +593,7 @@ class String
           pwarn "expecting identifier, found EOF", tokens, ind if ind>=tokens.size
           pwarn "cannot really set "+tokens[ind], tokens, ind if "{}:".chars.include? tokens[ind]
           [:assign,var(tokens[-1+ind+=1])]
-        when /^["']/ then [:var,var(t,Gstring.new(eval(t)))]
+        when /^["']/ then [:var,var(t,Gstring.new(NoInterpolationOption ? eval(t.gsub('#', '# ')).gsub('# ','#') : eval(t)))]
         when /^-?[0-9]/ then [:var,var(t,t.to_i)]
         else; [:var,var(t)]
       end
@@ -646,18 +681,22 @@ Stack = []
 {\!!{!}*}:xor;
 '.compile.go
 
-if ARGV.empty?
+if filenames.empty?
   puts "Golfscript Interactive Mode"
-  while (print "> "; code=gets)
+  while (print "> "; code=STDIN.gets)
     code.compile(true).go
     gpush Garray.new(Stack)
     'p'.compile.go
   end
 else
-  code=gets(nil)||''
-  Stack << (STDIN.isatty ? LazyInput.new : Gstring.new(STDIN.read))
+  code=File.read(filenames[0])
+  if gs_args.empty?
+    Stack << (STDIN.isatty ? LazyInput.new : Gstring.new(STDIN.read))
+  else
+    Stack << Garray.new(gs_args.map{|arg| Gstring.new(arg)})
+  end
 
   code.compile.go
   gpush Garray.new(Stack)
-  'puts'.compile.go
+  'puts'.compile.go if !QuineOption
 end
