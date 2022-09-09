@@ -671,6 +671,53 @@ cc 2,'until',"loop{a.go; #{var'!'}.go; break if gpop('unitl')==0; b.go}",Unsafe
 cc 1,'zip','Stack<<a.zip'
 cc 2,'base','Stack<<b.base(a)'
 
+cc 0,'V','puts "Golfscript 1.0 Beta, Ruby #{RUBY_VERSION}"'
+cc 0,'Q','puts \'http://golfscript.com/golfscript/quickref.html
+       name   args meanings
+          ~      1 bitwise not, dump, eval
+          `      1 inspect
+          !      1 logical not
+          @      3 rotate
+          #        comment
+          $ 1 or 2 stack ith, sort(by)
+          + coerce add, concat
+          - coerce subtract, set diff
+          *  order mult, block execute times, array repeat, join, fold
+          /  order div, split, split in groups of size, unfold, each
+          %  order mod, map, every ith element, clean split
+          | coerce bitwise/setwise or
+          & coerce bitwise/setwise and
+          ^ coerce bitwise/setwise xor
+        { }        blocks
+          \\\'        raw string
+          "        escaped string
+        [ ]        Array creation
+          \\      2 swap 2
+          :     1* assignment
+          ;      1 pop
+          <  order less than, elements less than index
+          >  order greater than, elements greater than or equal to index
+          =  order equal to, element at index
+          , 1 or 2 [*0...n], size, select
+          .      1 dup
+          ?  order pow, index, find
+          (      1 deincrement, uncons
+          )      1 increment, right uncons
+ and or xor      2
+      print      1
+          p      1
+          n      0
+       puts      1
+       rand      1
+         do      1
+while until      2
+         if      3
+        abs      1
+        zip      1
+       base      2
+          V      0 Print Golfscript/Ruby version
+          Q      0 Print quick ref\''
+
 Stack = []
 
 '"\n":n;
