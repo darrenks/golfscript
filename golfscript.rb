@@ -510,7 +510,7 @@ class Gblock < Garray
   end
   def sort
     a=gpop("sort")
-    a.factory(a.val.sort_by{|i|Stack<<i; go; gpop("sort by iteration")})
+    a.factory(a.val.stable_sort_by{|i|Stack<<i; go; gpop("sort by iteration")})
   end
   def select(a)
     a.factory(a.val.select{|i|Stack<<i;go; !gpop("select iteration").falsey})
@@ -533,6 +533,9 @@ class Array
     self-rhs|rhs-self
   end
   include Comparable
+  def stable_sort_by
+    sort_by.with_index{|e,i|[yield(e),i]}
+  end
 end
 
 $var_lookup={}
