@@ -571,8 +571,7 @@ class String
         break if begin_no==0
         if interactive_mode
           while ind >= tokens.size
-            print "  "*depth + "> "
-            s=STDIN.gets
+            s=Readline.readline("  "*depth + "> ", true)
             exit(0) if !s
             tokens.concat lex(s)
           end
@@ -733,7 +732,8 @@ Stack = []
 
 if filenames.empty?
   puts "Golfscript Interactive Mode"
-  while (print "> "; code=STDIN.gets)
+  require "readline"
+  while (code=Readline.readline("> ", true))
     code.compile(true).go
     gpush Garray.new(Stack)
     'p'.compile.go
