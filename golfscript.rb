@@ -734,9 +734,13 @@ if filenames.empty?
   puts "Golfscript Interactive Mode"
   require "readline"
   while (code=Readline.readline("> ", true))
-    code.compile(true).go
-    gpush Garray.new(Stack)
-    'p'.compile.go
+    begin
+      code.compile(true).go
+      gpush Garray.new(Stack)
+      'p'.compile.go
+    rescue
+      puts "#{$!.class}: #{$!.message}"
+    end
   end
 else
   code=File.read(filenames[0])
